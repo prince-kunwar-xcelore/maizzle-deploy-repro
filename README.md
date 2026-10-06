@@ -9,7 +9,33 @@ is marked external so Nitro does not bundle it.
 
 ```
 pnpm install
+PORT=3300 pnpm dev      # open http://localhost:3300
+```
+
+The page renders an email through the server route and shows two badges:
+whether the render succeeded, and whether Tailwind actually inlined anything.
+The second is the one to watch — most of the interesting failures still return
+a complete document.
+
+To see what a production build does, build it and serve each state:
+
+```
 pnpm build
+pnpm serve                              # as built — dies on startup
+pnpm strip   && pnpm serve              # works, by falling through to the install above
+pnpm restore && pnpm serve --hide-deps  # as built, shipped alone — dies
+pnpm vendor  && pnpm serve --hide-deps              # loads, but unstyled
+                pnpm serve --hide-deps --cwd .output  # fully works
+```
+
+`--hide-deps` renames the project's `node_modules` aside for the lifetime of
+the server, which is what a slim container image looks like: nothing for Node
+to find on the way up except what is inside `.output`. It is put back when the
+process exits.
+
+Or run every scenario at once without a browser:
+
+```
 pnpm matrix --vendor
 ```
 
@@ -39,7 +65,7 @@ container image looks like.
 | stripped, install above | **yes** | **yes** | **yes** |
 | stripped, shipped alone | no | no | no |
 | binding added, shipped alone | no | no | no |
-| vendored, cwd = project | yes | no | no |
+| vendored, cwd = project | yes | **yes** | **no** |
 | vendored, cwd = `.output` | **yes** | **yes** | **yes** |
 
 Three things are worth reading off that table.
@@ -60,10 +86,19 @@ lower because the mis-traced copies have been dropped.
 
 **The working directory matters, separately from resolution.** Maizzle resolves
 `@maizzle/tailwindcss` itself at runtime, relative to `process.cwd()`, outside
-the import graph entirely. Row 6 starts and renders but produces a document with
-no styles at all, because Tailwind never ran. In this repro that surfaces as a
-422; in a larger app it can return **200 with a perfectly well-formed, entirely
-unstyled email** — a silent wrong answer rather than a crash.
+the import graph entirely. Nothing in the app's source names it, so getting the
+bundling right does not cover it.
+
+The second-to-last row is the one worth sitting with: it answers **HTTP 200
+with a complete, well-formed email carrying no styles at all**. Not a crash, not
+an error response — a success, with the wrong document. The only trace is a line
+in the server log:
+
+```
+Error: Can't resolve '@maizzle/tailwindcss' in '<cwd>'
+```
+
+The two bottom rows differ in nothing but the working directory.
 
 ## Scripts
 
@@ -94,7 +129,11 @@ Two details that are easy to get wrong:
   flattens it apart and packages stop seeing their own neighbours — it fails on
   the first transitive import. A flat install has no links leaving the tree.
 - **Run with the working directory set to `.output`.** Otherwise Tailwind
-  resolution fails as described above.
+  resolution fails as described above — silently, with a 200.
+
+A render guard that only checks for an `<html>` element does not catch the
+unstyled case, because the document is structurally perfect. Checking for at
+least one inlined declaration is what distinguishes them.
 
 Size here: `.output` goes from 70M as built to 303M vendored. A real pipeline
 would use `pnpm deploy --prod` to get the same closure without dev dependencies.

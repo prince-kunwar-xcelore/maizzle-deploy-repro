@@ -64,8 +64,9 @@ if (started) {
 		report.status = res.status;
 		const payload = await res.text();
 		report.rendered = res.ok && payload.includes('Hi Alex');
-		// Tailwind inlines its rules as style attributes; none means it never ran.
-		report.styled = payload.includes('style=');
+		// Specifically Tailwind's output, not Maizzle's own boilerplate styles:
+		// `font-bold` compiles to this and nothing else in the document does.
+		report.styled = payload.includes('font-weight: 700');
 		if (!res.ok) report.error = payload.slice(0, 300);
 	} catch (error) {
 		report.error = String(error);

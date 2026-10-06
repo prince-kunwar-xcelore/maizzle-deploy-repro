@@ -13,7 +13,8 @@
     "inject-binding": "node scripts/inject-binding.mjs",
     "matrix": "node scripts/matrix.mjs",
     "vendor": "node scripts/vendor.mjs",
-    "audit": "node scripts/audit.mjs"
+    "audit": "node scripts/audit.mjs",
+    "serve": "node scripts/serve.mjs"
   },
   "dependencies": {
     "@maizzle/framework": "^6.1.7",
@@ -25,5 +26,8 @@
     "onlyBuiltDependencies": [
       "esbuild"
     ]
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4"
   }
 }
