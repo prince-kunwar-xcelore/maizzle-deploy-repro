@@ -19,10 +19,6 @@ export default defineNuxtConfig({
 			external: ['@maizzle/framework', '@maizzle/tailwindcss'],
 		},
 
-		// Maizzle resolves components by scanning a directory, and the server
-		// bundle has none. The layouts ride along as server assets and are written
-		// back out before the first render.
-		serverAssets: [{ baseName: 'emailLayouts', dir: fromHere('server/utils/layouts') }],
 
 		handlers: [
 			{ route: '/_internal/render', method: 'post', handler: fromHere('server/_internal/render.post.ts') },

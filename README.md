@@ -181,3 +181,33 @@ in that picture. With the module registered, the matrix above is unchanged:
 ```
 
 Row 0 fails with the same `Cannot find native binding` as without it.
+
+## Is our custom layout the cause?
+
+No. Tested on branch `test/docs-shape-builtin-components`.
+
+The Nuxt guide never places a custom layout anywhere. Every template in it is
+built from Maizzle's own auto-imported components (`Layout`, `Container`,
+`Heading`, `Button`); the only path option it documents is `static.source`, for
+images. The `<Default>` layout, the `serverAssets` entry and the
+materialise-to-disk step in `emailRender.ts` are all ours.
+
+So this branch removes every one of them: no `serverAssets`, no
+`components.source`, no files written at runtime, just an SFC string of
+built-in components passed to `render()` — the docs' shape exactly.
+
+The matrix is unchanged:
+
+```
+│ 0 │ 'as built, install above'      │ no  │ no  │ no  │
+│ 1 │ 'as built, shipped alone'      │ no  │ no  │ no  │
+│ 2 │ 'stripped, install above'      │ yes │ yes │ yes │
+│ 3 │ 'stripped, shipped alone'      │ no  │ no  │ no  │
+│ 4 │ 'binding added, shipped alone' │ no  │ no  │ no  │
+```
+
+Row 2 passing confirms the stripped-down template is valid and Tailwind still
+runs through it. Row 0 fails with the same `Cannot find native binding`.
+
+The crash happens while the server is still starting, before any template is
+parsed or any component is resolved, so component placement cannot affect it.
