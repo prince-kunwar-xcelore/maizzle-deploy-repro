@@ -50,9 +50,13 @@ install sitting right above it, because the traced copy is found first.
 
 **Adding back what the tracer missed does not converge.** Copying in the native
 binding gets past rolldown and straight into the next missing package. Run
-`pnpm audit` (the script here, not npm's) to see the size of the gap: the traced
-output declares **36 dependencies it does not carry**. Each one supplied reveals
-the next.
+`pnpm build && pnpm audit` (the script here, not npm's) to see the size of the
+gap on a fresh build: the traced output declares **36 dependencies it does not
+carry**. Each one supplied reveals the next.
+
+The audit reads whatever state `.output` is currently in, so run it straight
+after a build — `pnpm matrix` leaves the output vendored, where the number is
+lower because the mis-traced copies have been dropped.
 
 **The working directory matters, separately from resolution.** Maizzle resolves
 `@maizzle/tailwindcss` itself at runtime, relative to `process.cwd()`, outside
