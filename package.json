@@ -1,0 +1,29 @@
+{
+  "name": "maizzle-deploy-repro",
+  "private": true,
+  "type": "module",
+  "description": "Reproduces how an on-demand Maizzle render survives (or does not survive) a Nitro production build.",
+  "scripts": {
+    "dev": "nuxt dev",
+    "build": "nuxt build",
+    "postinstall": "nuxt prepare",
+    "probe": "node scripts/probe.mjs",
+    "strip": "node scripts/strip-traced.mjs",
+    "restore": "node scripts/restore-traced.mjs",
+    "inject-binding": "node scripts/inject-binding.mjs",
+    "matrix": "node scripts/matrix.mjs",
+    "vendor": "node scripts/vendor.mjs",
+    "audit": "node scripts/audit.mjs"
+  },
+  "dependencies": {
+    "@maizzle/framework": "^6.1.7",
+    "@maizzle/tailwindcss": "^1.5.6",
+    "nuxt": "^4.5.2",
+    "vue": "^3.5.43"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}
