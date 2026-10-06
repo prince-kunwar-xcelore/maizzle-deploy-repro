@@ -8,6 +8,9 @@ const fromHere = (...s: string[]) => join(here, ...s).replace(/\\/g, '/');
 export default defineNuxtConfig({
 	compatibilityDate: '2025-07-15',
 
+	// The official module, registered exactly as the docs prescribe.
+	modules: ['@maizzle/nuxt'],
+
 	nitro: {
 		// Maizzle is a build tool, not a leaf library: it starts a Vite SSR server
 		// per render. Bundling it produces a server that cannot load its own

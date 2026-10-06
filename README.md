@@ -143,3 +143,41 @@ would use `pnpm deploy --prod` to get the same closure without dev dependencies.
 The build and runtime images must share a libc. Only the binding matching the
 build machine is ever installed, so a glibc build stage feeding a musl runtime
 stage has no binding to find, however the packaging is arranged.
+
+## Does the official `@maizzle/nuxt` module change any of this?
+
+No. Tested on branch `test/maizzle-nuxt-module`.
+
+The module is seventeen lines. Its entire body:
+
+```js
+setup(options, nuxt) {
+  options.content ??= [emailsGlob]
+  options.output = { path: 'server/assets/emails', ...options.output }
+  options.server = { port: 4321, ...options.server }
+  addVitePlugin(maizzle(options))
+}
+```
+
+It registers a **Vite plugin** and sets three defaults. It does not touch Nitro,
+externals, tracing, or the runtime at all.
+
+What it gives you is the build-time path, and that path works well: with
+`app/emails/welcome.vue` present, `nuxt build` emits
+`server/assets/emails/welcome.html` with Tailwind compiled and CSS inlined, and
+Nitro bundles it to `chunks/raw/welcome.mjs`. Read back at runtime with
+`useStorage('assets:server').getItem('emails:welcome.html')`.
+
+What it does not give you is anything for `render()`. The docs' Server API
+section imports `render` straight from `@maizzle/framework` — the module is not
+in that picture. With the module registered, the matrix above is unchanged:
+
+```
+│ 0 │ 'as built, install above'      │ no  │ no  │ no  │
+│ 1 │ 'as built, shipped alone'      │ no  │ no  │ no  │
+│ 2 │ 'stripped, install above'      │ yes │ yes │ yes │
+│ 3 │ 'stripped, shipped alone'      │ no  │ no  │ no  │
+│ 4 │ 'binding added, shipped alone' │ no  │ no  │ no  │
+```
+
+Row 0 fails with the same `Cannot find native binding` as without it.
