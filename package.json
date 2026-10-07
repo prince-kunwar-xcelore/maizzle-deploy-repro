@@ -13,6 +13,8 @@
     "inject-binding": "node scripts/inject-binding.mjs",
     "matrix": "node scripts/matrix.mjs",
     "vendor": "node scripts/vendor.mjs",
+    "stub-replace": "node scripts/stub-replace.mjs",
+    "converge": "node scripts/converge.mjs",
     "audit": "node scripts/audit.mjs",
     "serve": "node scripts/serve.mjs"
   },

@@ -143,3 +143,73 @@ would use `pnpm deploy --prod` to get the same closure without dev dependencies.
 The build and runtime images must share a libc. Only the binding matching the
 build machine is ever installed, so a glibc build stage feeding a musl runtime
 stage has no binding to find, however the packaging is arranged.
+
+## The "replace the broken stubs" shape
+
+A natural thing to reach for is to let Nitro trace normally, delete the
+packages it got wrong, and copy the real ones in from the builder's
+`node_modules`:
+
+```dockerfile
+RUN rm -rf .output/server/node_modules/rolldown \
+           .output/server/node_modules/@rolldown \
+           .output/server/node_modules/@maizzle
+
+COPY --from=builder /app/node_modules/rolldown   .output/server/node_modules/rolldown
+COPY --from=builder /app/node_modules/@rolldown  .output/server/node_modules/@rolldown
+COPY --from=builder /app/node_modules/@maizzle   .output/server/node_modules/@maizzle
+```
+
+`pnpm stub-replace` runs those two steps against `.output`, and `pnpm converge`
+then boots the result in an isolated directory, reads whichever package Node
+says is missing, copies that one in, and goes again — so the question "how many
+packages is it really?" gets an answer rather than an estimate.
+
+```
+pnpm build
+pnpm stub-replace --source <a flat node_modules>
+pnpm converge --image <dir holding .output> --source <the same node_modules>
+```
+
+It does not converge. Measured on the same machine as the table above:
+
+| step | what happens |
+| --- | --- |
+| `COPY` from a pnpm tree | **fails at image build.** `node_modules/rolldown` and `node_modules/@rolldown` do not exist — pnpm's default layout keeps transitive packages in `.pnpm`, and only direct dependencies are linked at the top level. |
+| `COPY` from a flat tree | succeeds, so everything below assumes npm or `node-linker=hoisted` |
+| boot | `Cannot find package 'vue-router'` |
+| + `vue-router` | `Cannot find module '../lightningcss.linux-x64-gnu.node'` — **a second native binding**, in a package the three-line list does not mention |
+| + `lightningcss-linux-x64-gnu` | server starts. Render fails: `Failed to resolve vue/compiler-sfc` |
+| replace `vue` | same error — the real miss is `@vue/compiler-sfc`, swallowed by a `catch` in `@vitejs/plugin-vue` and reported as something else |
+| + `@vue/compiler-sfc` | `No "exports" main defined in .../estree-walker/package.json` |
+| + nested `estree-walker@2` | `TypeError: MagicString is not a constructor` |
+
+The last three rows are where it stops being a matter of patience.
+
+**The traced tree is flat, and conflicting versions are not reachable.** Nitro
+parks them in `.output/server/node_modules/.nitro/<name>@<version>` and rewrites
+the imports of the packages it traced to point there. Both `estree-walker@2.0.2`
+and `estree-walker@3.0.3` are physically present in this build. A hand-copied
+`@vue/compiler-sfc` gets none of that rewiring, so it resolves `estree-walker`
+the ordinary way, walks up to the flat slot, and finds the 3.x that happened to
+win it — while needing 2.x.
+
+Nesting the right version underneath fixes that one and surfaces
+`MagicString is not a constructor`, which is the same collision again with no
+error naming the package. At that point the work is no longer "copy some
+packages"; it is reimplementing an installer's version resolution by hand,
+against an error channel that has started lying.
+
+`pnpm vendor` sidesteps the whole class: it drops the mis-traced packages
+rather than repairing them, and lets a real installer build the tree.
+`Dockerfile` in this repo is that shape, and the two states were measured the
+same way — `.output` copied into an empty directory with nothing resolvable
+above it, which is what the image actually looks like:
+
+| packaging | starts | renders | styled |
+| --- | --- | --- | --- |
+| stubs replaced, flat builder tree | yes | **no** | no |
+| vendored, `WORKDIR /app` | yes | yes | **no** |
+| vendored, `WORKDIR /app/.output` | **yes** | **yes** | **yes** |
+
+The middle row is the silent one: HTTP 200, a complete email, no styles.
