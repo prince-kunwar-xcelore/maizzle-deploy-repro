@@ -186,13 +186,14 @@ It does not converge. Measured on the same machine as the table above:
 
 The last three rows are where it stops being a matter of patience.
 
-**The traced tree is flat, and conflicting versions are not reachable.** Nitro
-parks them in `.output/server/node_modules/.nitro/<name>@<version>` and rewrites
-the imports of the packages it traced to point there. Both `estree-walker@2.0.2`
-and `estree-walker@3.0.3` are physically present in this build. A hand-copied
-`@vue/compiler-sfc` gets none of that rewiring, so it resolves `estree-walker`
-the ordinary way, walks up to the flat slot, and finds the 3.x that happened to
-win it — while needing 2.x.
+**The traced tree is a symlink farm, and a copied package lands outside it.**
+Nitro's layout is pnpm's in miniature: 73 of the top-level entries in
+`.output/server/node_modules` are symlinks into `.nitro/<name>@<version>`, and
+packages needing a second version get a nested `node_modules` holding it. Both
+`estree-walker@2.0.2` and `3.0.3` are present in this build — `@vue/compiler-core`
+has 2.x nested underneath it, and the top-level `estree-walker` is a symlink to
+`.nitro/estree-walker@3.0.3`. A hand-copied `@vue/compiler-sfc` arrives with no
+nested copy of its own, walks up to that symlink, and binds 3.x while needing 2.x.
 
 Nesting the right version underneath fixes that one and surfaces
 `MagicString is not a constructor`, which is the same collision again with no
@@ -213,3 +214,50 @@ above it, which is what the image actually looks like:
 | vendored, `WORKDIR /app/.output` | **yes** | **yes** | **yes** |
 
 The middle row is the silent one: HTTP 200, a complete email, no styles.
+
+## Rebuilding the traced tree instead of repairing it
+
+There is a better target than `.output/node_modules`. Nitro already writes
+`.output/server/package.json` listing every dependency the bundle needs at an
+exact version — 199 of them here, against the 173 directories it ships. The
+manifest is right; only the install beside it is wrong. So the tree can be
+thrown away and rebuilt from Nitro's own list:
+
+```
+pnpm build
+pnpm vendor-server
+node server/index.mjs   # from inside .output/server
+```
+
+**The whole tree has to go, not just the packages that look broken.** Layering
+`npm install` over the traced tree does not work, and it does not fail
+gracefully either — npm's arborist cannot read the `.nitro` symlink farm as a
+node_modules layout and aborts before installing anything:
+
+```
+npm error Cannot read properties of null (reading 'fsTop')
+```
+
+Delete `node_modules` first and npm has an ordinary manifest and an empty
+directory, which is a problem it knows how to solve. It resolves the version
+conflicts Nitro was using `.nitro` for by nesting, the way it always does.
+
+Measured the same way as the other rows — `.output` copied into an empty
+directory with nothing resolvable above it:
+
+| packaging | `.output` | starts | renders | styled |
+| --- | --- | --- | --- | --- |
+| as built | 89M | no | no | no |
+| stubs replaced from a flat tree | — | yes | no | no |
+| `npm install` layered on the traced tree | — | \- | \- | \- (npm aborts) |
+| vendored, cwd = `.output` | 304M | yes | yes | yes |
+| **manifest rebuilt, cwd = `.output/server`** | **262M** | **yes** | **yes** | **yes** |
+
+It comes out smaller than `pnpm vendor`, because the manifest is the traced
+set rather than the app's full external closure, and it keeps the exact
+versions the build resolved rather than re-resolving ranges at package time.
+
+The working-directory rule is unchanged but moves with the tree: `node_modules`
+is now inside `server/`, so that is where the process has to start. Running it
+from `.output` gives the same silent failure as before — HTTP 200, complete
+email, no styles.

@@ -2,16 +2,22 @@
 #
 # The tempting shape is to let Nitro trace, delete the packages it got wrong,
 # and copy the real ones in from the builder's node_modules. `pnpm stub-replace`
-# in this repo runs exactly that, and README.md records how far it gets: past
-# rolldown's native binding, into lightningcss's, into @vue/compiler-sfc, and
-# then into a version collision no amount of copying resolves. Nitro's traced
-# tree is flat, with conflicting versions parked in `.nitro/<name>@<version>`
-# and reachable only from the imports Nitro rewrote. A hand-copied package gets
-# none of that rewiring, so it binds to whichever version won the flat slot.
+# runs exactly that, and README.md records how far it gets: past rolldown's
+# native binding, into lightningcss's, into @vue/compiler-sfc, and then into a
+# version collision no amount of copying resolves. Nitro's tree is a symlink
+# farm in pnpm's style — top-level entries pointing into `.nitro/<name>@<version>`,
+# second versions nested — and a hand-copied package arrives outside all of
+# that, binding whichever version the symlink happens to point at.
 #
-# What works is not patching the traced tree but replacing it: drop the
-# mis-traced packages and do a real, flat install of the externals inside
-# .output, where Node finds them walking up from server/.
+# Layering `npm install` over that tree is not the answer either: arborist
+# cannot read the symlink farm as a node_modules layout and aborts before
+# installing anything, with `Cannot read properties of null (reading 'fsTop')`.
+#
+# What works is to stop treating the traced tree as something to repair.
+# Nitro's own `.output/server/package.json` already names every dependency the
+# bundle needs at an exact version; the manifest is right and only the install
+# beside it is wrong. So `pnpm vendor-server` deletes the tree outright and has
+# npm build that manifest into an empty directory, which is an ordinary problem.
 
 FROM node:24-bookworm-slim AS builder
 WORKDIR /app
@@ -24,12 +30,11 @@ RUN pnpm install --frozen-lockfile
 COPY . .
 RUN pnpm build
 
-# Drops the mis-traced packages and runs `npm install` of the externals into
-# .output. npm rather than a copied pnpm tree: pnpm links each package to a
-# store and keeps its dependencies beside it there, so copying that tree with
-# symlinks dereferenced flattens it apart and packages stop seeing their own
-# neighbours. A flat install has no links leaving the tree, so it relocates.
-RUN pnpm vendor
+# npm rather than a copied pnpm tree: pnpm links each package to a store and
+# keeps its dependencies beside it there, so copying that tree with symlinks
+# dereferenced flattens it apart and packages stop seeing their own neighbours.
+# A fresh install has no links leaving the tree, so it relocates into an image.
+RUN pnpm vendor-server
 
 FROM node:24-bookworm-slim AS runtime
 
@@ -39,13 +44,14 @@ FROM node:24-bookworm-slim AS runtime
 WORKDIR /app
 COPY --from=builder /app/.output ./.output
 
-# Not /app. Maizzle resolves @maizzle/tailwindcss itself at runtime, relative
-# to process.cwd(), outside the import graph entirely — nothing in the app's
-# source names it. Get this wrong and the server answers HTTP 200 with a
-# complete, well-formed email carrying no styles at all; the only trace is
-# `Can't resolve '@maizzle/tailwindcss'` in the log.
-WORKDIR /app/.output
+# Where node_modules now lives, and not negotiable. Maizzle resolves
+# @maizzle/tailwindcss itself at runtime, relative to process.cwd(), outside
+# the import graph entirely — nothing in the app's source names it. Get this
+# wrong and the server answers HTTP 200 with a complete, well-formed email
+# carrying no styles at all; the only trace is a line in the log reading
+# `Can't resolve '@maizzle/tailwindcss'`.
+WORKDIR /app/.output/server
 
 ENV NODE_ENV=production
 EXPOSE 3000
-CMD ["node", "server/index.mjs"]
+CMD ["node", "index.mjs"]
