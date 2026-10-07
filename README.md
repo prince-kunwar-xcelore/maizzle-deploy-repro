@@ -261,3 +261,35 @@ The working-directory rule is unchanged but moves with the tree: `node_modules`
 is now inside `server/`, so that is where the process has to start. Running it
 from `.output` gives the same silent failure as before — HTTP 200, complete
 email, no styles.
+
+### Why the wipe has to be total
+
+Two narrower things look like they should work, and the reasons they don't are
+different from each other.
+
+Removing only the symlink farm — the 73 top-level links and `.nitro`, leaving
+the 153 real directories — does get npm to run:
+
+```
+added 149 packages, and changed 13 packages in 40s
+```
+
+So npm has no trouble with a pre-existing `node_modules`. The `fsTop` crash is
+about the symlink farm specifically, not about installing over an existing
+tree. Worth separating, because it is easy to conclude the whole approach is
+unavailable when only one shape of it is.
+
+That tree then fails to render anyway, with `Failed to resolve vue/compiler-sfc`
+— the same error the copy-the-packages route ends at. Note the count: 13
+changed, not 153. npm read the tracer's `vue` directory, saw a version that
+satisfied the manifest, and left it in place. It was missing `compiler-sfc`.
+
+Which is the answer to "why not just remove the broken ones": nothing
+distinguishes them. A mis-traced package is a directory with a correct
+`package.json` and some of its files, and npm's reconciliation trusts the
+version it reads there. A full wipe is not caution — it is the only state in
+which npm verifies anything at all.
+
+None of this is pnpm's doing, incidentally. There are no `.pnpm` directories
+anywhere inside `.output` and no symlink leaving it; the farm is Nitro's own
+construction and the same tree appears whatever installed the project.
