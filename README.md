@@ -293,3 +293,62 @@ which npm verifies anything at all.
 None of this is pnpm's doing, incidentally. There are no `.pnpm` directories
 anywhere inside `.output` and no symlink leaving it; the farm is Nitro's own
 construction and the same tree appears whatever installed the project.
+
+## Telling the tracer what it cannot see
+
+Nitro has a supported lever for this, and it turns out to cover almost all of
+it: `nitro.externals.traceInclude`, a list of things to trace as if something
+had imported them. Everything the trace misses here is missed for the same
+reason — it is reached through a call no static analysis can read:
+
+| entry | how it is reached |
+| --- | --- |
+| `@rolldown/binding-linux-x64-gnu` | platform/arch/libc sniffed at runtime |
+| `lightningcss-linux-x64-gnu` | the same, in a second package |
+| `vue-router` | `import.meta.resolve` inside Maizzle |
+| `vue/compiler-sfc` | a `createRequire` built at runtime by `@vitejs/plugin-vue` |
+| `vue/dist/vue.runtime.esm-bundler.js` | opened by path by Vite's dep scanner |
+
+Four things about `traceInclude` are worth knowing before reaching for it,
+because none of them announce themselves.
+
+**An entry that does not resolve is skipped in silence.** `this.resolve()`
+returns null and the loop moves on — no warning, and a build that looks
+identical to one that worked. Under pnpm this is the normal case: every entry
+above is transitive, so none is reachable from the project root until it is
+declared as a dependency.
+
+**Every entry has to be pre-resolved to an absolute path.** Nitro's own
+externals plugin answers Rollup's resolve with the bare specifier marked
+external, and the tracer then looks for a file by that name in the project
+root: `Error: File /app/vue-router does not exist`.
+
+**A `.css` entry point cannot go through it at all.** Rollup answers with a
+virtual `\0raw:` id and the build dies on `The argument 'oldPath' must be a
+string ... Received '/app/\x00raw:/app/node_modules/...'`.
+
+**Trace conditions are not the lever they look like.** Only vue's CJS builds
+get traced, which looks like an export-conditions problem; setting
+`traceOptions.conditions` to prefer `import` changes nothing, because nothing
+imports the ESM build either. Vite reads it as a file.
+
+That leaves the stylesheets, which go in a `compiled` hook — `@maizzle/tailwindcss`
+whole, and the four `.css` files the traced `tailwindcss` is missing. Copying
+CSS is safe in the way copying a package is not: no dependency closure to get
+wrong, nothing to resolve against the packages it lands beside, ~100K.
+
+| packaging | `.output` | starts | renders | styled |
+| --- | --- | --- | --- | --- |
+| as built | 89M | no | no | no |
+| stubs replaced from a flat tree | — | yes | no | no |
+| vendored, cwd = `.output` | 304M | yes | yes | yes |
+| manifest rebuilt, cwd = `.output/server` | 262M | yes | yes | yes |
+| **traced properly, cwd = `.output/server`** | **109M** | **yes** | **yes** | **yes** |
+
+Three times smaller than either packaging workaround, with no install step
+after the build, because it is the traced output — just traced completely.
+The working-directory rule is unchanged and still silent when broken.
+
+The libc caveat is unchanged too, and now explicit in the config: the binding
+names are chosen for the build machine, so a glibc build stage still cannot
+feed a musl runtime.

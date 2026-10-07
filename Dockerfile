@@ -13,11 +13,18 @@
 # cannot read the symlink farm as a node_modules layout and aborts before
 # installing anything, with `Cannot read properties of null (reading 'fsTop')`.
 #
-# What works is to stop treating the traced tree as something to repair.
-# Nitro's own `.output/server/package.json` already names every dependency the
-# bundle needs at an exact version; the manifest is right and only the install
-# beside it is wrong. So `pnpm vendor-server` deletes the tree outright and has
-# npm build that manifest into an empty directory, which is an ordinary problem.
+# Both of those treat the traced tree as something to fix after the fact. The
+# tracer is not wrong about how to copy a package; it is blind to a handful of
+# things nothing imports — a native binding chosen by a runtime platform
+# branch, an `import.meta.resolve`, a stylesheet pulled in by enhanced-resolve
+# mid-render. Nitro takes a list of those: `externals.traceInclude`, in
+# nuxt.config.ts, where the reason for each entry can sit next to it.
+#
+# What that does not cover is CSS. A `.css` entry point makes Rollup answer
+# the resolve with a virtual `\0raw:` id and the build dies, so the two
+# stylesheet packages are copied in a `compiled` hook instead. Copying CSS is
+# safe in the way copying a package is not: no dependency closure, nothing to
+# resolve against its new neighbours.
 
 FROM node:24-bookworm-slim AS builder
 WORKDIR /app
@@ -28,13 +35,11 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 
 COPY . .
+# No packaging step. nuxt.config.ts names what the tracer cannot see through
+# `externals.traceInclude`, so the trace comes out complete and `.output` is
+# already correct — 109M, against 262M for rebuilding the tree from Nitro's
+# manifest and 304M for installing the externals alongside it.
 RUN pnpm build
-
-# npm rather than a copied pnpm tree: pnpm links each package to a store and
-# keeps its dependencies beside it there, so copying that tree with symlinks
-# dereferenced flattens it apart and packages stop seeing their own neighbours.
-# A fresh install has no links leaving the tree, so it relocates into an image.
-RUN pnpm vendor-server
 
 FROM node:24-bookworm-slim AS runtime
 

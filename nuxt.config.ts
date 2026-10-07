@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { cp } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -44,6 +46,28 @@ function untraceable(): string[] {
 	].map(name => require.resolve(name));
 }
 
+/**
+ * The directory a package actually lives in.
+ *
+ * `require.resolve` answers with an entry point, which for these two is a file
+ * well inside the package — `dist/lib.js`, `dist/index.css` — and the CSS that
+ * needs copying sits at the root. Walking up to the manifest that names the
+ * package finds it without assuming a layout.
+ */
+function packageRoot(name: string): string {
+	const require = createRequire(import.meta.url);
+	let dir = dirname(require.resolve(name));
+
+	for (;;) {
+		const manifest = join(dir, 'package.json');
+		if (existsSync(manifest) && JSON.parse(readFileSync(manifest, 'utf8')).name === name) return dir;
+
+		const up = dirname(dir);
+		if (up === dir) throw new Error(`Could not find the package root for ${name}.`);
+		dir = up;
+	}
+}
+
 export default defineNuxtConfig({
 	compatibilityDate: '2025-07-15',
 
@@ -64,6 +88,36 @@ export default defineNuxtConfig({
 		// bundle has none. The layouts ride along as server assets and are written
 		// back out before the first render.
 		serverAssets: [{ baseName: 'emailLayouts', dir: fromHere('server/utils/layouts') }],
+
+		hooks: {
+			// The stylesheets, which cannot go through traceInclude at all: their
+			// entries are `.css` files, and Rollup answers the resolve with a
+			// virtual `\0raw:` id that the tracer then tries to open as a path.
+			// Nothing imports them either — Tailwind's own CSS pulls them in
+			// through enhanced-resolve while the render is running.
+			//
+			// Copying CSS is safe in a way copying a package is not. There is no
+			// dependency closure to get wrong and nothing to resolve against the
+			// packages it lands beside, so none of the shadowing that makes
+			// hand-copied packages fail applies. Together they are ~100K.
+			async compiled(nitro) {
+				const modules = join(nitro.options.output.serverDir, 'node_modules');
+
+				// Ships nothing but CSS, and the trace misses all of it.
+				await cp(
+					packageRoot('@maizzle/tailwindcss'),
+					join(modules, '@maizzle', 'tailwindcss'),
+					{ recursive: true, dereference: true },
+				);
+
+				// Traced for its JavaScript, which leaves the four stylesheets its
+				// exports map points at — `tailwindcss/theme` and friends — absent.
+				const tailwind = packageRoot('tailwindcss');
+				for (const file of ['index.css', 'theme.css', 'preflight.css', 'utilities.css']) {
+					await cp(join(tailwind, file), join(modules, 'tailwindcss', file));
+				}
+			},
+		},
 
 		handlers: [
 			{ route: '/_internal/render', method: 'post', handler: fromHere('server/_internal/render.post.ts') },
